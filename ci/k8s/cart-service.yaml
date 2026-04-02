@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service
+  namespace: ci-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+        - name: cart-service
+          image: ${SERVICE_IMAGE}
+          ports:
+            - containerPort: 7070
+          env:
+            - name: REDIS_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: cart-service-secrets
+                  key: REDIS_ADDR
+          readinessProbe:
+            grpc:
+              port: 7070
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-service
+  namespace: ci-test
+spec:
+  selector:
+    app: cart-service
+  ports:
+    - port: 7070
+      targetPort: 7070

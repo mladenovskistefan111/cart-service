@@ -1,146 +1,152 @@
-using System;
-using System.Threading.Tasks;
-using Grpc.Net.Client;
+using cartservice.store;
+using Grpc.Core;
 using Hipstershop;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.Hosting;
+using Moq;
 using Xunit;
-using static Hipstershop.CartService;
+using CartService = cartservice.services.CartService;
 
 namespace cartservice.tests
 {
     public class CartServiceTests
     {
-        private readonly IHostBuilder _host;
+        // ── Helpers ──────────────────────────────────────────────────────────────
 
-        public CartServiceTests()
+        private static CartService BuildService(ICartStore store) => new(store);
+
+        private static ServerCallContext FakeContext() => TestServerCallContext.Create();
+
+        // ── AddItem ──────────────────────────────────────────────────────────────
+
+        [Fact]
+        public async Task AddItem_DelegatesToStore()
         {
-            _host = new HostBuilder().ConfigureWebHost(webBuilder =>
-            {
-                webBuilder
-                    .UseStartup<Startup>()
-                    .UseTestServer();
-            });
+            Mock<ICartStore> store = new();
+            CartService svc = BuildService(store.Object);
+
+            await svc.AddItem(
+                new AddItemRequest { UserId = "u1", Item = new CartItem { ProductId = "p1", Quantity = 2 } },
+                FakeContext());
+
+            store.Verify(s => s.AddItemAsync("u1", "p1", 2), Times.Once);
         }
 
         [Fact]
-        public async Task GetItem_NoAddItemBefore_EmptyCartReturned()
+        public async Task AddItem_ReturnsEmptyProto()
         {
-            // Setup test server and client
-            using var server = await _host.StartAsync();
-            var httpClient = server.GetTestClient();
+            Mock<ICartStore> store = new();
+            CartService svc = BuildService(store.Object);
 
-            string userId = Guid.NewGuid().ToString();
+            Empty result = await svc.AddItem(
+                new AddItemRequest { UserId = "u1", Item = new CartItem { ProductId = "p1", Quantity = 1 } },
+                FakeContext());
 
-            // Create a GRPC communication channel between the client and the server
-            var channel = GrpcChannel.ForAddress(httpClient.BaseAddress, new GrpcChannelOptions
-            {
-                HttpClient = httpClient
-            });
-
-            var cartClient = new CartServiceClient(channel);
-
-            var request = new GetCartRequest
-            {
-                UserId = userId,
-            };
-
-            var cart = await cartClient.GetCartAsync(request);
-            Assert.NotNull(cart);
-
-            // All grpc objects implement IEquitable, so we can compare equality with by-value semantics
-            Assert.Equal(new Cart(), cart);
+            Assert.NotNull(result);
+            Assert.IsType<Empty>(result);
         }
 
         [Fact]
-        public async Task AddItem_ItemExists_Updated()
+        public async Task AddItem_StoreThrows_PropagatesRpcException()
         {
-            // Setup test server and client
-            using var server = await _host.StartAsync();
-            var httpClient = server.GetTestClient();
+            Mock<ICartStore> store = new();
+            store.Setup(s => s.AddItemAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>()))
+                 .ThrowsAsync(new RpcException(new Status(StatusCode.FailedPrecondition, "storage error")));
 
-            string userId = Guid.NewGuid().ToString();
+            CartService svc = BuildService(store.Object);
 
-            // Create a GRPC communication channel between the client and the server
-            var channel = GrpcChannel.ForAddress(httpClient.BaseAddress, new GrpcChannelOptions
-            {
-                HttpClient = httpClient
-            });
+            RpcException ex = await Assert.ThrowsAsync<RpcException>(() =>
+                svc.AddItem(
+                    new AddItemRequest { UserId = "u1", Item = new CartItem { ProductId = "p1", Quantity = 1 } },
+                    FakeContext()));
 
-            var client = new CartServiceClient(channel);
-            var request = new AddItemRequest
-            {
-                UserId = userId,
-                Item = new CartItem
-                {
-                    ProductId = "1",
-                    Quantity = 1
-                }
-            };
+            Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
+        }
 
-            // First add - nothing should fail
-            await client.AddItemAsync(request);
+        // ── GetCart ──────────────────────────────────────────────────────────────
 
-            // Second add of existing product - quantity should be updated
-            await client.AddItemAsync(request);
+        [Fact]
+        public async Task GetCart_ReturnsCartFromStore()
+        {
+            Cart expected = new() { UserId = "u1" };
+            expected.Items.Add(new CartItem { ProductId = "p1", Quantity = 3 });
 
-            var getCartRequest = new GetCartRequest
-            {
-                UserId = userId
-            };
-            var cart = await client.GetCartAsync(getCartRequest);
-            Assert.NotNull(cart);
-            Assert.Equal(userId, cart.UserId);
+            Mock<ICartStore> store = new();
+            store.Setup(s => s.GetCartAsync("u1")).ReturnsAsync(expected);
+
+            CartService svc = BuildService(store.Object);
+            Cart cart = await svc.GetCart(new GetCartRequest { UserId = "u1" }, FakeContext());
+
+            Assert.Equal("u1", cart.UserId);
             Assert.Single(cart.Items);
-            Assert.Equal(2, cart.Items[0].Quantity);
-
-            // Cleanup
-            await client.EmptyCartAsync(new EmptyCartRequest { UserId = userId });
+            Assert.Equal("p1", cart.Items[0].ProductId);
+            Assert.Equal(3, cart.Items[0].Quantity);
         }
 
         [Fact]
-        public async Task AddItem_New_Inserted()
+        public async Task GetCart_EmptyUserId_ReturnsEmptyCart()
         {
-            // Setup test server and client
-            using var server = await _host.StartAsync();
-            var httpClient = server.GetTestClient();
+            Mock<ICartStore> store = new();
+            store.Setup(s => s.GetCartAsync("")).ReturnsAsync(new Cart { UserId = "" });
 
-            string userId = Guid.NewGuid().ToString();
+            CartService svc = BuildService(store.Object);
+            Cart cart = await svc.GetCart(new GetCartRequest { UserId = "" }, FakeContext());
 
-            // Create a GRPC communication channel between the client and the server
-            var channel = GrpcChannel.ForAddress(httpClient.BaseAddress, new GrpcChannelOptions
-            {
-                HttpClient = httpClient
-            });
-
-            // Create a proxy object to work with the server
-            var client = new CartServiceClient(channel);
-
-            var request = new AddItemRequest
-            {
-                UserId = userId,
-                Item = new CartItem
-                {
-                    ProductId = "1",
-                    Quantity = 1
-                }
-            };
-
-            await client.AddItemAsync(request);
-
-            var getCartRequest = new GetCartRequest
-            {
-                UserId = userId
-            };
-            var cart = await client.GetCartAsync(getCartRequest);
             Assert.NotNull(cart);
-            Assert.Equal(userId, cart.UserId);
-            Assert.Single(cart.Items);
-
-            await client.EmptyCartAsync(new EmptyCartRequest { UserId = userId });
-            cart = await client.GetCartAsync(getCartRequest);
             Assert.Empty(cart.Items);
+        }
+
+        [Fact]
+        public async Task GetCart_StoreThrows_PropagatesRpcException()
+        {
+            Mock<ICartStore> store = new();
+            store.Setup(s => s.GetCartAsync(It.IsAny<string>()))
+                 .ThrowsAsync(new RpcException(new Status(StatusCode.FailedPrecondition, "storage error")));
+
+            CartService svc = BuildService(store.Object);
+
+            RpcException ex = await Assert.ThrowsAsync<RpcException>(() =>
+                svc.GetCart(new GetCartRequest { UserId = "u1" }, FakeContext()));
+
+            Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
+        }
+
+        // ── EmptyCart ─────────────────────────────────────────────────────────────
+
+        [Fact]
+        public async Task EmptyCart_DelegatesToStore()
+        {
+            Mock<ICartStore> store = new();
+            CartService svc = BuildService(store.Object);
+
+            await svc.EmptyCart(new EmptyCartRequest { UserId = "u1" }, FakeContext());
+
+            store.Verify(s => s.EmptyCartAsync("u1"), Times.Once);
+        }
+
+        [Fact]
+        public async Task EmptyCart_ReturnsEmptyProto()
+        {
+            Mock<ICartStore> store = new();
+            CartService svc = BuildService(store.Object);
+
+            Empty result = await svc.EmptyCart(new EmptyCartRequest { UserId = "u1" }, FakeContext());
+
+            Assert.NotNull(result);
+            Assert.IsType<Empty>(result);
+        }
+
+        [Fact]
+        public async Task EmptyCart_StoreThrows_PropagatesRpcException()
+        {
+            Mock<ICartStore> store = new();
+            store.Setup(s => s.EmptyCartAsync(It.IsAny<string>()))
+                 .ThrowsAsync(new RpcException(new Status(StatusCode.FailedPrecondition, "storage error")));
+
+            CartService svc = BuildService(store.Object);
+
+            RpcException ex = await Assert.ThrowsAsync<RpcException>(() =>
+                svc.EmptyCart(new EmptyCartRequest { UserId = "u1" }, FakeContext()));
+
+            Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
         }
     }
 }

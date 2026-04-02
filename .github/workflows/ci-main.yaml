@@ -1,0 +1,463 @@
+name: CI - Main
+
+on:
+  workflow_dispatch:  # manual trigger via GitHub Actions UI
+
+  # push:
+  #   branches-ignore:
+  #     - main
+
+jobs:
+  # ─── STAGE 1 (parallel) ───────────────────────────────────────────────────
+
+  lint-format:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: 'global.json'
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Check formatting
+        run: dotnet format --verify-no-changes --verbosity diagnostic
+
+      - name: Lint (Roslyn Analyzers)
+        run: dotnet build cartservice.sln --configuration Release /warnaserror
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: 'global.json'
+
+      - name: Build
+        run: dotnet build src/cartservice.csproj --configuration Release
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: 'global.json'
+
+      - name: Restore dependencies
+        run: dotnet restore tests/cartservice.tests.csproj
+
+      - name: Run unit tests
+        run: |
+          dotnet test tests/cartservice.tests.csproj \
+            --configuration Release \
+            --no-restore \
+            --filter "FullyQualifiedName!~Integration&FullyQualifiedName!~E2E" \
+            --logger "trx;LogFileName=unit-test-results.trx" \
+            --results-directory ./test-results
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Test Results
+          path: test-results/unit-test-results.trx
+          reporter: dotnet-trx
+
+  # ─── STAGE 2 (parallel) ───────────────────────────────────────────────────
+
+  sca:
+    name: SCA - Dependency Vulnerabilities
+    runs-on: ubuntu-latest
+    needs: [lint-format, secret-scan, build-check, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: 'global.json'
+
+      - name: Restore dependencies
+        run: dotnet restore src/cartservice.csproj
+
+      - name: Check for vulnerable packages
+        run: |
+          dotnet list src/cartservice.csproj package --vulnerable --include-transitive 2>&1 | tee vuln-report.txt
+          if grep -q "has the following vulnerable packages" vuln-report.txt; then
+            echo "FAIL: vulnerable packages found"
+            cat vuln-report.txt
+            exit 1
+          fi
+          echo "PASS: no vulnerable packages found"
+
+  sast:
+    name: SAST - Static Security Analysis
+    runs-on: ubuntu-latest
+    needs: [lint-format, secret-scan, build-check, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/csharp
+            p/owasp-top-ten
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  # ─── STAGE 3 ──────────────────────────────────────────────────────────────
+
+  build-and-stage:
+    name: Build & Stage Image (ghcr.io)
+    runs-on: ubuntu-latest
+    needs: [sca, sast]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      staged-image: ${{ steps.image-ref.outputs.ref }}
+      image-digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=staging
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to ghcr.io (staging)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Extract single image ref for scanning
+        id: image-ref
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "ref=ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+  # ─── STAGE 4 ──────────────────────────────────────────────────────────────
+
+  scan-image:
+    name: Scan Image for CVEs
+    runs-on: ubuntu-latest
+    needs: [build-and-stage]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build-and-stage.outputs.staged-image }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+  # ─── STAGE 5 ──────────────────────────────────────────────────────────────
+
+  push-and-sign:
+    name: Push & Sign Image (Docker Hub)
+    runs-on: ubuntu-latest
+    needs: [scan-image, build-and-stage]
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker Hub metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/cart-service
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Push scanned image to Docker Hub
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        run: |
+          cosign sign --yes \
+            ${{ secrets.DOCKERHUB_USERNAME }}/cart-service@${{ steps.push.outputs.digest }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.DOCKERHUB_USERNAME }}/cart-service@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attach SBOM to image
+        run: |
+          cosign attach sbom \
+            --sbom sbom.spdx.json \
+            ${{ secrets.DOCKERHUB_USERNAME }}/cart-service@${{ steps.push.outputs.digest }}
+
+  # ─── STAGE 6 — Deploy & Test on kind ──────────────────────────────────────
+
+  integration-tests:
+    name: Integration & E2E Tests
+    runs-on: ubuntu-latest
+    needs: [push-and-sign, build-and-stage]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: 'global.json'
+
+      - name: Restore dependencies
+        run: dotnet restore tests/cartservice.tests.csproj
+
+      # ── Cluster setup ──────────────────────────────────────────────────────
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Create kind cluster
+        run: kind create cluster --name ci --wait 60s
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and load cart-service image into kind
+        run: |
+          docker pull ${{ needs.build-and-stage.outputs.staged-image }}
+          kind load docker-image ${{ needs.build-and-stage.outputs.staged-image }} --name ci
+
+      - name: Pull and load Redis image into kind
+        run: |
+          docker pull redis:7-alpine
+          kind load docker-image redis:7-alpine --name ci
+
+      - name: Create namespace
+        run: kubectl apply -f ci/k8s/namespace.yaml
+
+      - name: Create secrets
+        run: |
+          kubectl create secret generic cart-service-secrets \
+            --from-literal=REDIS_ADDR=redis:6379 \
+            -n ci-test
+
+      - name: Apply manifests
+        env:
+          SERVICE_IMAGE: ${{ needs.build-and-stage.outputs.staged-image }}
+        run: |
+          envsubst < ci/k8s/cart-service-redis.yaml   | kubectl apply -f -
+          envsubst < ci/k8s/cart-service.yaml         | kubectl apply -f -
+
+      - name: Wait for Redis ready
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=redis \
+            -n ci-test \
+            --timeout=120s
+
+      # ── Integration tests (Redis layer) ────────────────────────────────────
+
+      - name: Port forward Redis
+        run: |
+          kubectl port-forward svc/redis 6379:6379 -n ci-test &
+          sleep 3
+
+      - name: Run integration tests
+        env:
+          REDIS_ADDR: localhost:6379
+        run: |
+          dotnet test tests/cartservice.tests.csproj \
+            --configuration Release \
+            --no-restore \
+            --filter "FullyQualifiedName~Integration" \
+            --logger "trx;LogFileName=integration-test-results.trx" \
+            --results-directory ./test-results
+
+      # ── Wait for service ───────────────────────────────────────────────────
+
+      - name: Wait for cart-service ready
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=cart-service \
+            -n ci-test \
+            --timeout=120s
+
+      # ── Port forward ───────────────────────────────────────────────────────
+
+      - name: Port forward cart-service
+        run: |
+          kubectl port-forward svc/cart-service 7070:7070 -n ci-test &
+          sleep 3
+
+      # ── Smoke test ─────────────────────────────────────────────────────────
+
+      - name: Install grpcurl
+        run: |
+          curl -sSL https://github.com/fullstorydev/grpcurl/releases/download/v1.9.1/grpcurl_1.9.1_linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin grpcurl
+
+      - name: Smoke test - health check
+        run: |
+          response=$(grpcurl -plaintext localhost:7070 grpc.health.v1.Health/Check)
+          status=$(echo "$response" | grep -o '"status": "[^"]*"' | cut -d'"' -f4)
+          if [ "$status" != "SERVING" ]; then
+            echo "FAIL: expected SERVING, got $status"
+            exit 1
+          fi
+          echo "PASS: service is SERVING"
+
+      # ── E2E tests ──────────────────────────────────────────────────────────
+
+      - name: Run E2E tests
+        env:
+          GRPC_HOST: localhost:7070
+        run: |
+          dotnet test tests/cartservice.tests.csproj \
+            --configuration Release \
+            --no-restore \
+            --filter "FullyQualifiedName~E2E" \
+            --logger "trx;LogFileName=e2e-test-results.trx" \
+            --results-directory ./test-results
+
+      # ── Load test ──────────────────────────────────────────────────────────
+
+      - name: Install ghz
+        run: |
+          curl -sSL https://github.com/bojand/ghz/releases/download/v0.120.0/ghz-linux-x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin ghz
+
+      - name: Load test
+        run: |
+          ghz --insecure \
+            --proto src/protos/cart.proto \
+            --call hipstershop.CartService/GetCart \
+            --data '{"user_id":"loadtest-user"}' \
+            --rps 1000 \
+            -z 30s \
+            -c 10 \
+            --format json \
+            -o /tmp/ghz-result.json \
+            localhost:7070
+
+      - name: Check load test thresholds
+        run: |
+          ERROR_RATE=$(jq '.errorRate' /tmp/ghz-result.json)
+          P99=$(jq '.latencyDistribution[] | select(.percentage == 99) | .latency' /tmp/ghz-result.json)
+          P99_MS=$(echo "$P99 / 1000000" | bc)
+
+          echo "Error rate: $ERROR_RATE"
+          echo "p99 latency: ${P99_MS}ms"
+
+          if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+            echo "FAIL: error rate ${ERROR_RATE} exceeds 1%"
+            exit 1
+          fi
+
+          if (( P99_MS > 200 )); then
+            echo "FAIL: p99 latency ${P99_MS}ms exceeds 200ms"
+            exit 1
+          fi
+
+          echo "PASS: error rate=${ERROR_RATE} p99=${P99_MS}ms"
+
+      # ── Publish all test results ────────────────────────────────────────────
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Integration & E2E Test Results
+          path: test-results/*.trx
+          reporter: dotnet-trx
+
+      # ── Teardown (always) ──────────────────────────────────────────────────
+
+      - name: Teardown kind cluster
+        if: always()
+        run: kind delete cluster --name ci

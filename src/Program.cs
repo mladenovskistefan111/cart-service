@@ -5,46 +5,51 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Prometheus;
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 // --- Redis ---
-var redisAddr = Environment.GetEnvironmentVariable("REDIS_ADDR")
+string redisAddr = Environment.GetEnvironmentVariable("REDIS_ADDR")
     ?? throw new InvalidOperationException("REDIS_ADDR environment variable is not set.");
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
     options.Configuration = redisAddr;
 });
+
+// Register both the concrete type (for Redis health-check) and the abstraction (for CartService).
 builder.Services.AddSingleton<RedisCartStore>();
+builder.Services.AddSingleton<ICartStore>(sp => sp.GetRequiredService<RedisCartStore>());
 
 // --- gRPC ---
 builder.Services.AddGrpc();
 builder.Services.AddGrpcReflection();
 
 // --- Tracing + Runtime Metrics via OTEL ---
-var collectorAddr = Environment.GetEnvironmentVariable("COLLECTOR_SERVICE_ADDR");
-var serviceName   = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "cart-service";
+string? collectorAddr = Environment.GetEnvironmentVariable("COLLECTOR_SERVICE_ADDR");
+string serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "cart-service";
 
-builder.Services.AddOpenTelemetry()
+_ = builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(serviceName))
     .WithTracing(tracing =>
     {
-        tracing
+        _ = tracing
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation();
 
         if (!string.IsNullOrEmpty(collectorAddr))
-            tracing.AddOtlpExporter(o => o.Endpoint = new Uri($"http://{collectorAddr}"));
+        {
+            _ = tracing.AddOtlpExporter(o => o.Endpoint = new Uri($"http://{collectorAddr}"));
+        }
     })
     .WithMetrics(metrics =>
     {
-        metrics
+        _ = metrics
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation();
     });
 
 // --- App ---
-var app = builder.Build();
+WebApplication app = builder.Build();
 
 app.UseRouting();
 app.UseHttpMetrics();
@@ -53,6 +58,6 @@ app.MapGrpcService<CartService>();
 app.MapGrpcService<HealthCheckService>();
 app.MapGrpcReflectionService();
 app.MapMetrics("/metrics");
-app.MapGet("/", () => "cart-service gRPC — use a gRPC client to interact.");
+_ = app.MapGet("/", () => "cart-service gRPC — use a gRPC client to interact.");
 
 app.Run();

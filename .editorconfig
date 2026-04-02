@@ -1,0 +1,38 @@
+root = true
+
+[*]
+indent_style = space
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_size = 4
+
+# ── Enforced rules ────────────────────────────────────────────────────────────
+dotnet_diagnostic.IDE0160.severity = error   # file-scoped namespaces
+dotnet_diagnostic.IDE0290.severity = error   # primary constructors
+dotnet_diagnostic.IDE0008.severity = error   # explicit types (no var)
+dotnet_diagnostic.IDE0011.severity = error   # braces on if/else
+dotnet_diagnostic.IDE0052.severity = error   # remove unread private members
+
+# ── Suppressed rules ──────────────────────────────────────────────────────────
+
+# CA1848: LoggerMessage delegates — enforced in RedisCartStore via source-gen,
+# suppressed globally to avoid noise from generated/third-party code paths.
+dotnet_diagnostic.CA1848.severity = none
+
+# IDE0058: Expression value unused — unavoidable with fluent builder APIs
+# (AddOpenTelemetry, MapGet, etc.). Use discard `_ =` where it matters.
+dotnet_diagnostic.IDE0058.severity = none
+
+# IDE0046: Simplify if to conditional expression — readability preference,
+# keep explicit if/else for clarity in async error-handling paths.
+dotnet_diagnostic.IDE0046.severity = none
+
+# ASP0027: public partial class Program no longer required — not used, kept
+# suppressed to avoid confusion if generated code varies by SDK version.
+dotnet_diagnostic.ASP0027.severity = none
+
+# EnableGenerateDocumentationFile: XML docs not required for internal services.
+dotnet_diagnostic.IDE0005.severity = none

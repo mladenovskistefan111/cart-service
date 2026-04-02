@@ -3,100 +3,111 @@ using Grpc.Core;
 using Hipstershop;
 using Microsoft.Extensions.Caching.Distributed;
 
-namespace cartservice.store;
-
-public class RedisCartStore
+namespace cartservice.store
 {
-    private readonly IDistributedCache _cache;
-    private readonly ILogger<RedisCartStore> _logger;
-
-    public RedisCartStore(IDistributedCache cache, ILogger<RedisCartStore> logger)
+    public partial class RedisCartStore(IDistributedCache cache, ILogger<RedisCartStore> logger) : ICartStore
     {
-        _cache  = cache;
-        _logger = logger;
-    }
+        // LoggerMessage delegates — CA1848
+        [LoggerMessage(Level = LogLevel.Information, Message = "AddItem called for userId={UserId} productId={ProductId} quantity={Quantity}")]
+        private static partial void LogAddItem(ILogger logger, string userId, string productId, int quantity);
 
-    public async Task AddItemAsync(string userId, string productId, int quantity)
-    {
-        _logger.LogInformation("AddItem called for userId={UserId} productId={ProductId} quantity={Quantity}",
-            userId, productId, quantity);
+        [LoggerMessage(Level = LogLevel.Information, Message = "GetCart called for userId={UserId}")]
+        private static partial void LogGetCart(ILogger logger, string userId);
 
-        try
+        [LoggerMessage(Level = LogLevel.Information, Message = "EmptyCart called for userId={UserId}")]
+        private static partial void LogEmptyCart(ILogger logger, string userId);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to add item to cart for userId={UserId}")]
+        private static partial void LogAddItemError(ILogger logger, Exception ex, string userId);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to get cart for userId={UserId}")]
+        private static partial void LogGetCartError(ILogger logger, Exception ex, string userId);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to empty cart for userId={UserId}")]
+        private static partial void LogEmptyCartError(ILogger logger, Exception ex, string userId);
+
+        public async Task AddItemAsync(string userId, string productId, int quantity)
         {
-            Cart cart;
-            var bytes = await _cache.GetAsync(userId);
+            LogAddItem(logger, userId, productId, quantity);
 
-            if (bytes == null)
+            try
             {
-                cart = new Cart { UserId = userId };
-                cart.Items.Add(new CartItem { ProductId = productId, Quantity = quantity });
-            }
-            else
-            {
-                cart = Cart.Parser.ParseFrom(bytes);
-                var existing = cart.Items.FirstOrDefault(i => i.ProductId == productId);
-                if (existing == null)
+                Cart cart;
+                byte[]? bytes = await cache.GetAsync(userId);
+
+                if (bytes == null)
+                {
+                    cart = new Cart { UserId = userId };
                     cart.Items.Add(new CartItem { ProductId = productId, Quantity = quantity });
+                }
                 else
-                    existing.Quantity += quantity;
+                {
+                    cart = Cart.Parser.ParseFrom(bytes);
+                    CartItem? existing = cart.Items.FirstOrDefault(i => i.ProductId == productId);
+                    if (existing == null)
+                    {
+                        cart.Items.Add(new CartItem { ProductId = productId, Quantity = quantity });
+                    }
+                    else
+                    {
+                        existing.Quantity += quantity;
+                    }
+                }
+
+                await cache.SetAsync(userId, cart.ToByteArray());
             }
-
-            await _cache.SetAsync(userId, cart.ToByteArray());
+            catch (Exception ex)
+            {
+                LogAddItemError(logger, ex, userId);
+                throw new RpcException(new Status(StatusCode.FailedPrecondition,
+                    $"Can't access cart storage. {ex.Message}"));
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to add item to cart for userId={UserId}", userId);
-            throw new RpcException(new Status(StatusCode.FailedPrecondition,
-                $"Can't access cart storage. {ex.Message}"));
-        }
-    }
 
-    public async Task<Cart> GetCartAsync(string userId)
-    {
-        _logger.LogInformation("GetCart called for userId={UserId}", userId);
+        public async Task<Cart> GetCartAsync(string userId)
+        {
+            LogGetCart(logger, userId);
 
-        try
-        {
-            var bytes = await _cache.GetAsync(userId);
-            if (bytes != null)
-                return Cart.Parser.ParseFrom(bytes);
+            try
+            {
+                byte[]? bytes = await cache.GetAsync(userId);
+                return bytes != null ? Cart.Parser.ParseFrom(bytes) : new Cart { UserId = userId };
+            }
+            catch (Exception ex)
+            {
+                LogGetCartError(logger, ex, userId);
+                throw new RpcException(new Status(StatusCode.FailedPrecondition,
+                    $"Can't access cart storage. {ex.Message}"));
+            }
+        }
 
-            return new Cart { UserId = userId };
-        }
-        catch (Exception ex)
+        public async Task EmptyCartAsync(string userId)
         {
-            _logger.LogError(ex, "Failed to get cart for userId={UserId}", userId);
-            throw new RpcException(new Status(StatusCode.FailedPrecondition,
-                $"Can't access cart storage. {ex.Message}"));
-        }
-    }
+            LogEmptyCart(logger, userId);
 
-    public async Task EmptyCartAsync(string userId)
-    {
-        _logger.LogInformation("EmptyCart called for userId={UserId}", userId);
+            try
+            {
+                await cache.SetAsync(userId, new Cart { UserId = userId }.ToByteArray());
+            }
+            catch (Exception ex)
+            {
+                LogEmptyCartError(logger, ex, userId);
+                throw new RpcException(new Status(StatusCode.FailedPrecondition,
+                    $"Can't access cart storage. {ex.Message}"));
+            }
+        }
 
-        try
+        public async Task<bool> PingAsync()
         {
-            await _cache.SetAsync(userId, new Cart { UserId = userId }.ToByteArray());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to empty cart for userId={UserId}", userId);
-            throw new RpcException(new Status(StatusCode.FailedPrecondition,
-                $"Can't access cart storage. {ex.Message}"));
-        }
-    }
-
-    public async Task<bool> PingAsync()
-    {
-        try
-        {
-            await _cache.GetAsync("health-ping");
-            return true;
-        }
-        catch
-        {
-            return false;
+            try
+            {
+                await cache.GetAsync("health-ping");
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

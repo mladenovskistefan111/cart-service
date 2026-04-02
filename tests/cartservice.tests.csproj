@@ -2,19 +2,54 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <RootNamespace>cartservice.tests</RootNamespace>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
+  <!-- Reference the main service project so tests can use its types -->
   <ItemGroup>
-    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
-    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.3" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <ProjectReference Include="../src/cartservice.csproj" />
   </ItemGroup>
 
+  <!-- Test framework — all xUnit v2, runner pinned to match -->
   <ItemGroup>
-    <ProjectReference Include="..\src\cartservice.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk"      Version="17.14.0" />
+    <PackageReference Include="xunit"                       Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio"   Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector"          Version="6.0.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
+
+  <!-- Mocking -->
+  <ItemGroup>
+    <PackageReference Include="Moq" Version="4.20.72" />
+  </ItemGroup>
+
+  <!-- Skip support for integration / e2e tests -->
+  <ItemGroup>
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+  </ItemGroup>
+
+  <!-- gRPC client for integration + e2e tests -->
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client"   Version="2.76.0" />
+    <PackageReference Include="Google.Protobuf"   Version="3.31.1" />
+    <PackageReference Include="Grpc.Tools"        Version="2.76.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!-- Redis cache for integration tests -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.3" />
+  </ItemGroup>
+
 </Project>

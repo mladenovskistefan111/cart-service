@@ -1,0 +1,14 @@
+## Build outputs
+[Bb]in/
+[Oo]bj/
+
+## User/IDE settings
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+## OS files
+.DS_Store
+Thumbs.db
