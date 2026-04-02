@@ -16,6 +16,8 @@ spec:
       containers:
         - name: cart-service
           image: ${SERVICE_IMAGE}
+          securityContext:
+            allowPrivilegeEscalation: false
           ports:
             - containerPort: 7070
           env:
