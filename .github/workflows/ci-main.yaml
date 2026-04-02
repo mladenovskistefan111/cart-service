@@ -283,6 +283,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      checks: write
 
     steps:
       - uses: actions/checkout@v4
