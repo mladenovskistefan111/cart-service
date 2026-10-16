@@ -22,7 +22,7 @@ COPY --from=builder /app/publish .
 ENV ASPNETCORE_HTTP_PORTS=7070 \
     DOTNET_EnableDiagnostics=0
 
-EXPOSE 7070 9090
+EXPOSE 7070
 
 USER app
 
