@@ -18,7 +18,7 @@
 
   <!-- Test framework — all xUnit v2, runner pinned to match -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk"      Version="17.14.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk"      Version="17.14.1" />
     <PackageReference Include="xunit"                       Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio"   Version="2.8.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -32,24 +32,24 @@
 
   <!-- Mocking -->
   <ItemGroup>
-    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="Moq" Version="4.21.0" />
   </ItemGroup>
 
   <!-- Skip support for integration / e2e tests -->
   <ItemGroup>
-    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.85" />
   </ItemGroup>
 
   <!-- gRPC client for integration + e2e tests -->
   <ItemGroup>
-    <PackageReference Include="Grpc.Net.Client"   Version="2.76.0" />
-    <PackageReference Include="Google.Protobuf"   Version="3.31.1" />
-    <PackageReference Include="Grpc.Tools"        Version="2.76.0" PrivateAssets="All" />
+    <PackageReference Include="Grpc.Net.Client"   Version="2.84.0" />
+    <PackageReference Include="Google.Protobuf"   Version="3.36.2" />
+    <PackageReference Include="Grpc.Tools"        Version="2.84.0" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Redis cache for integration tests -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.12" />
   </ItemGroup>
 
 </Project>
