@@ -1,0 +1,44 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cart-service
+  title: cart-service
+  description: "A gRPC service that manages shopping carts for the platform-demo e-commerce platform."
+  annotations:
+    github.com/project-slug: platform-boutique/app-cart-service
+    backstage.io/techdocs-ref: dir:.
+    backstage.io/kubernetes-id: cart-service
+    backstage.io/kubernetes-namespace: platform-demo
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=cart-service
+    argocd/app-name: dev-cart-service
+    grafana/dashboard-selector: "tags @> 'cart'"
+    grafana/overview-dashboard: "https://grafana.platform-demo.test/d/cart-service-overview"
+  tags: [dotnet, grpc]
+  links:
+    - { url: "https://github.com/platform-boutique/app-cart-service", title: Repository, icon: github }
+    - { url: "https://argocd.platform-demo.test/applications/argocd/dev-cart-service", title: Argo CD, icon: dashboard }
+    - { url: "https://grafana.platform-demo.test/d/cart-service-overview", title: Grafana dashboard, icon: dashboard }
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:default/maintainers
+  system: shop
+  providesApis: [cart-service-api]
+  dependsOn:
+    - resource:default/cart-redis
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: cart-service-api
+  description: gRPC interface of cart-service (Protocol Buffers).
+  tags: [grpc, protobuf]
+  links:
+    - { url: "https://github.com/platform-boutique/app-cart-service/blob/main/src/protos/cart.proto", title: "cart.proto on GitHub", icon: code }
+spec:
+  type: grpc
+  lifecycle: experimental
+  owner: group:default/maintainers
+  system: shop
+  definition:
+    $text: ./src/protos/cart.proto
