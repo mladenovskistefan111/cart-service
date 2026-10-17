@@ -18,22 +18,20 @@ jobs:
       contents: read
       pull-requests: read # gitleaks lists the PR's commits through the API
       checks: write # test-reporter publishes a check run
-    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/dotnet-ci.yaml@87fca0e809f6ba84b782bc2fb2cc1d740b3c877f # v1.1.0
+    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/dotnet-ci.yaml@cfa9265dd493260f1bf67b77d6cc396356c132d6 # v2 test
     with:
       solution: cartservice.sln
       project: src/cartservice.csproj
       test-project: tests/cartservice.tests.csproj
-    secrets:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
   image:
     needs: [dotnet]
     permissions:
       contents: read
       packages: write
-    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/docker-build.yaml@87fca0e809f6ba84b782bc2fb2cc1d740b3c877f # v1.1.0
+    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/docker-build.yaml@cfa9265dd493260f1bf67b77d6cc396356c132d6 # v2 test
 
   workflows:
     permissions:
       contents: read
-    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/workflow-lint.yaml@87fca0e809f6ba84b782bc2fb2cc1d740b3c877f # v1.1.0
+    uses: mladenovskistefan111/platform-demo-workflows/.github/workflows/workflow-lint.yaml@cfa9265dd493260f1bf67b77d6cc396356c132d6 # v2 test
