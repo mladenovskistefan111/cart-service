@@ -12,6 +12,7 @@ metadata:
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=cart-service
     argocd/app-name: dev-cart-service
     grafana/dashboard-selector: "tags @> 'cart'"
+    grafana/alert-label-selector: "service=cart-service"
     grafana/overview-dashboard: "https://grafana.platform-demo.test/d/cart-service-overview"
   tags: [dotnet, grpc]
   links:
