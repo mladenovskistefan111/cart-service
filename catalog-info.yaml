@@ -14,11 +14,11 @@ metadata:
     argocd/app-name: dev-cart-service
     grafana/dashboard-selector: "tags @> 'cart'"
     grafana/alert-label-selector: "service=cart-service"
-    grafana/overview-dashboard: "https://grafana.platform-demo.test/d/cart-service-overview"
+    grafana/overview-dashboard: "https://grafana.platform-demo.click/d/cart-service-overview"
   tags: [dotnet, grpc]
   links:
-    - { url: "https://argocd.platform-demo.test/applications/argocd/dev-cart-service", title: Argo CD, icon: dashboard }
-    - { url: "https://grafana.platform-demo.test/d/cart-service-overview", title: Grafana dashboard, icon: dashboard }
+    - { url: "https://argocd.platform-demo.click/applications/argocd/dev-cart-service", title: Argo CD, icon: dashboard }
+    - { url: "https://grafana.platform-demo.click/d/cart-service-overview", title: Grafana dashboard, icon: dashboard }
 spec:
   type: service
   lifecycle: experimental
